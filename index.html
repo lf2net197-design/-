@@ -1,0 +1,237 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111827">
+<title>循環倒數計時器</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; padding: 24px 18px;
+  background: #0b1220; color: white;
+  font-family: system-ui, sans-serif;
+  display: flex; justify-content: center; align-items: center;
+}
+.app {
+  width: 100%; max-width: 420px; text-align: center;
+  background: #151f31; padding: 25px 20px;
+  border-radius: 24px;
+}
+h1 { font-size: 25px; }
+p { color: #a9bad0; font-size: 14px; }
+input {
+  width: 100%; padding: 13px; margin: 8px 0 18px;
+  border: 1px solid #43536c; border-radius: 12px;
+  background: #0b1220; color: white; font-size: 18px;
+  text-align: center;
+}
+.time {
+  font-size: clamp(64px, 20vw, 90px); font-weight: bold;
+  font-variant-numeric: tabular-nums; margin: 20px 0;
+}
+.urgent { color: #fb7185; }
+button {
+  border: 0; border-radius: 12px; padding: 14px 10px;
+  font-size: 16px; font-weight: bold; cursor: pointer;
+}
+#start { width: 100%; background: #67e8f9; color: #082f49; }
+.controls { display: flex; gap: 10px; margin-top: 10px; }
+.controls button { flex: 1; background: #334155; color: white; }
+button:disabled { opacity: .4; }
+#status { min-height: 24px; margin: 14px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>🔔 循環倒數計時器</h1>
+  <p>每輪結束後自動重新倒數</p>
+
+  <label for="seconds">每輪倒數秒數</label>
+  <input id="seconds" type="number" min="1" max="86400" value="60">
+
+  <div id="time" class="time">01:00</div>
+  <p id="caption">準備開始</p>
+  <p id="status">最後五秒會每秒響一次</p>
+
+  <button id="start">▶ 開始循環</button>
+  <div class="controls">
+    <button id="pause" disabled>Ⅱ 暫停</button>
+    <button id="stop" disabled>■ 停止</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let duration = 60;
+let endAt = 0;
+let running = false;
+let paused = false;
+let remaining = 60000;
+let timer = null;
+let lastBeep = 0;
+let audio = null;
+let cycle = 1;
+
+function formatTime(seconds) {
+  seconds = Math.max(0, Math.ceil(seconds));
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return String(m).padStart(2, "0") + ":" +
+         String(s).padStart(2, "0");
+}
+
+function beep() {
+  try {
+    audio ||= new (window.AudioContext ||
+                   window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    const now = audio.currentTime;
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.25, now + 0.02);
+    gain.gain.setValueAtTime(0.25, now + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+
+    osc.connect(gain);
+    gain.connect(audio.destination);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  } catch (e) {
+    $("status").textContent = "無法播放聲音，請檢查瀏覽器設定";
+  }
+}
+
+function render(sec) {
+  $("time").textContent = formatTime(sec);
+  $("time").classList.toggle("urgent", sec <= 5);
+  $("caption").textContent =
+    sec <= 5 ? "登！登！登！最後倒數" : "第 " + cycle + " 輪";
+}
+
+function tick() {
+  if (!running || paused) return;
+
+  const now = performance.now();
+  let ms = endAt - now;
+
+  if (ms <= 0) {
+    do {
+      endAt += duration * 1000;
+      cycle++;
+    } while (endAt <= now);
+    lastBeep = 0;
+    ms = endAt - now;
+    $("status").textContent = "新一輪開始！";
+  }
+
+  const sec = Math.ceil(ms / 1000);
+  render(sec);
+
+  if (sec >= 1 && sec <= 5 && sec !== lastBeep) {
+    beep();
+    lastBeep = sec;
+  }
+
+  timer = setTimeout(tick, 50);
+}
+
+function start() {
+  if (running && !paused) return;
+
+  if (!running) {
+    const value = Number($("seconds").value);
+    if (!Number.isInteger(value) || value < 1 ||
+        value > 86400) {
+      $("status").textContent = "請輸入 1 到 86400 的整數秒";
+      return;
+    }
+    duration = value;
+    cycle = 1;
+    remaining = duration * 1000;
+    lastBeep = 0;
+    endAt = performance.now() + remaining;
+  } else {
+    endAt = performance.now() + remaining;
+  }
+
+  running = true;
+  paused = false;
+  if (audio && audio.state === "suspended") audio.resume();
+
+  $("seconds").disabled = true;
+  $("start").disabled = true;
+  $("pause").disabled = false;
+  $("stop").disabled = false;
+  $("pause").textContent = "Ⅱ 暫停";
+  $("status").textContent = "循環倒數中";
+
+  clearTimeout(timer);
+  tick();
+}
+
+function pause() {
+  if (!running) return;
+
+  if (!paused) {
+    remaining = Math.max(0, endAt - performance.now());
+    paused = true;
+    clearTimeout(timer);
+    $("pause").textContent = "▶ 繼續";
+    $("status").textContent = "已暫停";
+    render(Math.ceil(remaining / 1000));
+  } else {
+    start();
+  }
+}
+
+function stop() {
+  running = false;
+  paused = false;
+  clearTimeout(timer);
+
+  $("seconds").disabled = false;
+  $("start").disabled = false;
+  $("pause").disabled = true;
+  $("stop").disabled = true;
+  $("pause").textContent = "Ⅱ 暫停";
+
+  cycle = 1;
+  remaining = duration * 1000;
+  lastBeep = 0;
+  $("time").classList.remove("urgent");
+  $("time").textContent = formatTime(duration);
+  $("caption").textContent = "已停止";
+  $("status").textContent = "準備就緒";
+}
+
+$("start").addEventListener("click", start);
+$("pause").addEventListener("click", pause);
+$("stop").addEventListener("click", stop);
+
+$("seconds").addEventListener("change", () => {
+  if (!running) {
+    const n = Number($("seconds").value);
+    if (Number.isInteger(n) && n >= 1 && n <= 86400) {
+      duration = n;
+      $("time").textContent = formatTime(n);
+    }
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" &&
+      running && !paused) {
+    clearTimeout(timer);
+    tick();
+  }
+});
+</script>
+</body>
+</html>
